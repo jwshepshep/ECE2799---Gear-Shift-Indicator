@@ -9,7 +9,7 @@ static BLEUUID serviceUUID("FFF0");  //Hardcoded for now
 static BLEUUID charTXUUID("FFF2");  //TX is transmitting, hardcoded for now
 static BLEUUID charRXUUID("FFF1");  //RX is receiving, hardcoded for now
 
-static obdAddress("1c:A1:35:69:8D:C5"); //also hardcoded for now
+static BLEAddress obdAddress("1c:A1:35:69:8D:C5"); //also hardcoded for now
 
 BLERemoteCharacteristic* txChar;
 BLERemoteCharacteristic* rxChar;
@@ -96,7 +96,7 @@ void sendOBD(String cmd) {
   DEBUG.println(cmd);
 
   cmd += "\r";
-  txChar->writeValue(cmd.c_str(), cmd.length(), true); // I have changed this line since testing, if it doesn't work remove the true from the end and only use 2 parameters
+  txChar->writeValue(cmd.c_str(), cmd.length());
 }
 
 void setup() {
