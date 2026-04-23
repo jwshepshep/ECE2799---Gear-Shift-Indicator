@@ -43,7 +43,7 @@ void notifyCallback(
     int A = strtol(msg.substring(6, 8).c_str(), NULL, 16);
     int B = strtol(msg.substring(9, 11).c_str(), NULL, 16);
 
-    float rpm = ((256 * A) + B) / 4.0;
+    float rpm = ((256 * A) + B) / 4.0; //will need to make this a global variable eventually, just local for now
 
     Serial.print("RPM: ");
     Serial.println(rpm);
