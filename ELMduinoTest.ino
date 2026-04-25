@@ -1,18 +1,17 @@
 #include "BluetoothSerial.h"
 #include "ELMduino.h"
 #include <LiquidCrystal.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
 
-BluetoothSerial SerialBT;
-#define ELM_PORT SerialBT
-#define DEBUG_PORT Serial
+#define INC_WRAP(v,b,e) (v == e ? v = b : v++)
+#define DEC_WRAP(v,b,e) (v == b ? v = e : v--)
 
-ELM327 myELM327;
-
-typedef enum { ENG_RPM, SPEED } obd_pid_states;
-obd_pid_states obd_state = ENG_RPM;
-
-float rpm = 0;
-float mph = 0;
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+#define SDA_PIN 15
+#define SCL_PIN 4
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 
 const int redPin = 27;
 const int greenPin = 14;
@@ -25,13 +24,21 @@ const int rs = 32, en = 23, d4 = 22, d5 = 21, d6 = 19, d7 = 18;
 
 LiquidCrystal lcd(rs, en, d4, d5, d6, d7);
 
-enum screen {MAIN, BUZZER, BRIGHTNESS};
+enum screen {MAIN, BUZZER, BRIGHTNESS, GEAR, TIRE, FINAL};
 int screenNum = 0;
 
 int currentMillis = 0;
 int previousMillis = 0;
 
-bool buzzerToggle = 1;
+bool buzzerToggle = 0; // Default off
+// Each one needs 3 decimal places + the integer
+int gearSelected = 0; // For UI purposes
+int digitSelected = 0;
+int cursorType = 0; // Toggles whether we are switching screens or values
+#define CURSOR_MAX 3 // 0 - screen switching, 1 - gear switching, 2 - 
+#define DIGIT_MAX 3
+float gear[6] = {3.625, 2.071, 1.474, 1.038, 0.844, 0.500}; // Default values
+float tireDiameter = 22.0;
 
 
 void setColor(int redValue, int greenValue,  int blueValue) {
@@ -50,26 +57,59 @@ void setBuzzer(int freq) {
 
 void printScreen()
 {
-  lcd.setCursor(0, 0);
-
   switch(screenNum)
   {
     case MAIN:
+      lcd.setCursor(0, 0);
       lcd.print("Gear:           ");
       lcd.setCursor(0, 1);
       lcd.print("                ");
       break;
     case BUZZER:
+      lcd.setCursor(0, 0);
       lcd.print("Buzzer Enabled: ");
       lcd.setCursor(0, 1);
       lcd.print(buzzerToggle);
       break;
     case BRIGHTNESS:
+      lcd.setCursor(0, 0);
       lcd.print("Brightness:     ");
       lcd.setCursor(0, 1);
       lcd.print("                ");
       break;
+    case GEAR:
+      lcd.setCursor(0, 0);
+      lcd.print("Gear #");
+      lcd.print(gearSelected + 1);
+      lcd.print(" Ratio: ");
+      lcd.setCursor(0, 1);
+      lcd.print(gear[gearSelected]);
+      lcd.print("           ");
+      lcd.setCursor(0,0);
+      break;
+    case TIRE:
+      lcd.setCursor(0, 0);
+      lcd.print("Tire Diameter:  ");
+      lcd.setCursor(0, 1);
+      lcd.print(tireDiameter);
+      lcd.print("               ");
+      break;
+    default:
+      lcd.setCursor(0, 0);
+      lcd.print("UNUSED          ");
+      break;
   }
+}
+
+void displayNumber(int num)
+{
+  display.clearDisplay();
+  display.setRotation(1); // Numbers will be "sideways" so that they can occupt the wider space that the OLED has
+  display.setTextSize(8,16);
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(0, 0);
+  display.println(num); // Quick convert to char
+  display.display();
 }
 
 void setup()
@@ -85,53 +125,113 @@ void setup()
 
    // set up the LCD's number of columns and rows:
   lcd.begin(16, 2);
+  lcd.blink();
+  // Print currently selected screen.
+  printScreen();
 
   Serial.begin(9600);
-    /**
-    DEBUG_PORT.begin(115200);
-    // SerialBT.setPin("1234");
-    ELM_PORT.begin("ArduHUD", true);
+  Wire.begin(SDA_PIN, SCL_PIN);
+  if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)){
+    Serial.println("SSD1306 allocation failed");
+    for(;;); // HALT
+  }
 
-    
-
-    if (!ELM_PORT.connect("OBDII"))
-    {
-        Serial.println("Can't connect AHHH!!!!");
-
-        DEBUG_PORT.println("Couldn't connect to OBD scanner - Phase 1");
-        while (1)
-            ;
-    }
-
-    if (!myELM327.begin(ELM_PORT, true, 2000))
-    {
-        DEBUG_PORT.println("Couldn't connect to OBD scanner - Phase 2");
-        while (1)
-            ;
-    }
-
-    DEBUG_PORT.println("Connected to ELM327");
-    **/
+  displayNumber(6);
+  delay(1000);
+  displayNumber(5);
+  delay(1000);
+  displayNumber(4);
+  delay(1000);
+  displayNumber(3);
+  delay(1000);
+  displayNumber(2);
+  delay(1000);
+  displayNumber(1);
+  delay(1000);
 }
 
 void loop()
 {
   int currentMillis = millis();
-
-  // Print currently selected screen.
-  printScreen();
   
   // Button Read
   if(digitalRead(incButtonPin) == LOW){
-    screenNum == 2 ? screenNum = 0 : screenNum++;
+    switch(cursorType)
+    {
+      case 0: // screen switching
+        INC_WRAP(screenNum, 0, FINAL-1);
+        printScreen();
+        break; 
+      case 1: // gear select
+        INC_WRAP(gearSelected, 0, 5);
+        printScreen(); // must come before setCursor for the blinking cursor
+        lcd.setCursor(6,0); // Hardcoded 6 should be where the number is
+        break;
+      case 2: // digit select
+        INC_WRAP(digitSelected, 0, DIGIT_MAX);
+        printScreen(); 
+        lcd.setCursor(digitSelected, 1);
+        break;
+      case 3: // digit adjust
+        if(screenNum == GEAR){
+          gear[gearSelected] += 1.0 * 1.0/(digitSelected+1);
+          printScreen();
+          lcd.setCursor(digitSelected, 1);
+        }
+        break;
+    }
     delay(300);
   }
   else if(digitalRead(decButtonPin) == LOW){
-    screenNum == 0 ? screenNum = 2 : screenNum--;
+      switch(cursorType)
+      {
+        case 0: // screen switching
+          DEC_WRAP(screenNum, 0, FINAL-1);
+          break; 
+        case 1: // gear select
+          DEC_WRAP(gearSelected, 0, 5);
+          printScreen(); 
+          lcd.setCursor(6,0);
+          break;
+        case 2: // digit select
+          DEC_WRAP(digitSelected, 0, DIGIT_MAX);
+          printScreen(); 
+          lcd.setCursor(digitSelected, 1);
+          break;
+        case 3: // digit adjust
+          if(screenNum == GEAR){
+            gear[gearSelected] -= 1.0 * 1.0/(digitSelected+1);
+            printScreen(); 
+            lcd.setCursor(digitSelected, 1);
+          }
+          break;
+      }
     delay(300);
   }
   else if(digitalRead(selButtonPin) == LOW){
-    buzzerToggle ^= 1;
+    switch(screenNum)
+    {
+      case MAIN:
+
+        break;
+      case BUZZER:
+        buzzerToggle ^= 1;
+        printScreen(); 
+        break;
+      case BRIGHTNESS:
+
+        break;
+      case GEAR:
+        INC_WRAP(cursorType, 0, CURSOR_MAX);
+        printScreen(); 
+        break;
+      case TIRE:
+
+        break;
+      default:
+        break;
+    }
+      
     delay(300);
   }
 
@@ -154,50 +254,6 @@ void loop()
   }
 
   
-
-  
-  /**
-  switch (obd_state)
-  {
-    case ENG_RPM:
-    {
-      rpm = myELM327.rpm();
-      
-      if (myELM327.nb_rx_state == ELM_SUCCESS)
-      {
-        DEBUG_PORT.print("rpm: ");
-        DEBUG_PORT.println(rpm);
-        obd_state = SPEED;
-      }
-      else if (myELM327.nb_rx_state != ELM_GETTING_MSG)
-      {
-        myELM327.printError();
-        obd_state = SPEED;
-      }
-      
-      break;
-    }
-    
-    case SPEED:
-    {
-      mph = myELM327.mph();
-      
-      if (myELM327.nb_rx_state == ELM_SUCCESS)
-      {
-        DEBUG_PORT.print("mph: ");
-        DEBUG_PORT.println(mph);
-        obd_state = ENG_RPM;
-      }
-      else if (myELM327.nb_rx_state != ELM_GETTING_MSG)
-      {
-        myELM327.printError();
-        obd_state = ENG_RPM;
-      }
-      
-      break;
-    }
-  }
-  **/
 }
 
 
